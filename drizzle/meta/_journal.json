@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "mysql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "5",
+      "when": 1787719230107,
+      "tag": "0000_good_overlord",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "5",
+      "when": 1787719643190,
+      "tag": "0001_adorable_thaddeus_ross",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1787720169657,
+      "tag": "0002_romantic_warbird",
+      "breakpoints": true
+    }
+  ]
+}
