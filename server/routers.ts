@@ -9,12 +9,17 @@ import {
   getPersistedOrders,
   persistDemoReservation,
   updateDeliveryPlanStatus,
+  lookupLotTraceability,
   updatePersistedOrderStatus,
 } from "./db";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { protectedProcedure, publicProcedure, router } from "./_core/trpc";
 import { createDemoOrder, demoListings, demoMarketplace } from "./marketplaceDemo";
+import { optimizeWave } from "./logisticsEngine";
+import { getMandiHistory, getMandiRate } from "./integrations/mandiEngine";
+import { generateCropForecast } from "./demandForecast";
+import { parseVoiceListing } from "./voiceListing";
 
 const fpoProcedure = protectedProcedure.use(({ ctx, next }) => {
   if (ctx.user.role !== "admin" && ctx.user.role !== "fpo") {
@@ -104,6 +109,64 @@ export const appRouter = router({
       .input(z.object({ planId: z.number().int().positive(), planStatus: z.enum(["draft", "ready", "in_transit", "completed"]) }))
       .mutation(({ input }) => updateDeliveryPlanStatus(input.planId, input.planStatus)),
     impactSnapshots: operationsProcedure.query(() => getImpactSnapshotRecords()),
+    optimizeWave: operationsProcedure
+      .input(
+        z.object({
+          nodes: z
+            .array(
+              z.object({
+                id: z.string().min(1),
+                name: z.string().min(1),
+                lat: z.number().min(-90).max(90),
+                lng: z.number().min(-180).max(180),
+                demandKg: z.number(),
+              }),
+            )
+            .min(3)
+            .max(25),
+          vehicleCapacityKg: z.number().int().positive().max(10000).default(1200),
+          maxVehicles: z.number().int().positive().max(8).default(4),
+        }),
+      )
+      .mutation(async ({ input }) => optimizeWave(input.nodes, input)),
+    demandForecast: publicProcedure
+      .input(
+        z.object({
+          commodity: z.string().min(2).max(120),
+          state: z.string().min(2).max(100).default("Tamil Nadu"),
+          currentStockKg: z.number().int().positive().max(100000).default(1000),
+        }),
+      )
+      .query(({ input }) =>
+        generateCropForecast(
+          input.commodity,
+          input.state,
+          getMandiHistory(input.commodity, input.state).map((h) => ({
+            date: h.date,
+            pricePerKg: h.pricePerKg,
+            arrivalsTonnes: h.arrivalsTonnes,
+          })),
+          input.currentStockKg,
+        ),
+      ),
+    mandiRate: publicProcedure
+      .input(
+        z.object({
+          commodity: z.string().min(2).max(120),
+          state: z.string().min(2).max(100).default("Tamil Nadu"),
+          district: z.string().max(100).optional(),
+        }),
+      )
+      .query(async ({ input }) => getMandiRate(input.commodity, input.state, input.district)),
+    traceLot: publicProcedure
+      .input(z.object({ lotCode: z.string().min(5).max(96) }))
+      .query(async ({ input }) => {
+        const result = await lookupLotTraceability(input.lotCode);
+        return result;
+      }),
+    parseVoiceListing: publicProcedure
+      .input(z.object({ transcript: z.string().min(1).max(1000) }))
+      .mutation(({ input }) => parseVoiceListing(input.transcript)),
   }),
 });
 

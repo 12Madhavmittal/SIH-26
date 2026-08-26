@@ -13,6 +13,7 @@ import {
   users,
 } from "../drizzle/schema";
 import { ENV } from "./_core/env";
+import { generateLotCode, verifyWeights } from "./lotTraceability";
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
@@ -182,6 +183,7 @@ export async function assembleDemoLot(input: {
   const fpoId = await ensureDemoFpo();
   if (!db || !fpoId) return { stored: false };
   const totalKg = input.contributions.reduce((sum, item) => sum + item.contributedKg, 0);
+  const weightCheck = verifyWeights(input.contributions, totalKg);
   const listingId = await ensureDemoListing({
     crop: input.crop,
     availableKg: totalKg,
@@ -191,7 +193,12 @@ export async function assembleDemoLot(input: {
     conventionalPricePerKg: 42,
   });
   if (!listingId) return { stored: false };
-  const lotCode = `DEMO-${input.crop.slice(0, 3).toUpperCase()}-${Date.now().toString().slice(-6)}`;
+  const lotCode = generateLotCode({
+    fpoCode: "ANN",
+    crop: input.crop,
+    grade: input.grade,
+    totalKg,
+  });
   const lotResult = await db.insert(traceabilityLots).values({
     listingId,
     fpoId,
@@ -220,7 +227,53 @@ export async function assembleDemoLot(input: {
       grade: input.grade,
     });
   }
-  return { stored: true, lotCode, totalKg, contributorCount: input.contributions.length };
+  return { stored: true, lotCode, totalKg, contributorCount: input.contributions.length, weightCheck };
+}
+
+export async function lookupLotTraceability(lotCode: string) {
+  const db = await getDb();
+  if (!db) return { found: false as const, reason: "database-unavailable" };
+  const lot = (
+    await db.select().from(traceabilityLots).where(eq(traceabilityLots.lotCode, lotCode)).limit(1)
+  )[0];
+  if (!lot) return { found: false as const, reason: "lot-not-found" };
+
+  const contributions = await db
+    .select({
+      farmerCode: farmerProfiles.farmerCode,
+      harvestCluster: farmerProfiles.harvestCluster,
+      contributedKg: lotContributions.contributedKg,
+      grade: lotContributions.grade,
+      harvestedAt: lotContributions.harvestedAt,
+    })
+    .from(lotContributions)
+    .innerJoin(farmerProfiles, eq(lotContributions.farmerId, farmerProfiles.id))
+    .where(eq(lotContributions.lotId, lot.id));
+
+  const listing = (await db.select().from(produceListings).where(eq(produceListings.id, lot.listingId)).limit(1))[0];
+  const weightCheck = verifyWeights(
+    contributions.map((c) => ({
+      farmerCode: c.farmerCode,
+      harvestCluster: c.harvestCluster,
+      contributedKg: c.contributedKg,
+    })),
+    lot.totalKg,
+  );
+
+  return {
+    found: true as const,
+    lot: {
+      lotCode: lot.lotCode,
+      crop: listing?.crop ?? "",
+      grade: lot.grade,
+      totalKg: lot.totalKg,
+      packedAt: lot.packedAt,
+      status: lot.lotStatus,
+      createdAt: lot.createdAt,
+    },
+    contributors: contributions,
+    weightCheck,
+  };
 }
 
 export async function getPersistedOrders() {
