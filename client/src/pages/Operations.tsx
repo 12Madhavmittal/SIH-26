@@ -1,15 +1,420 @@
-import { ArrowDownRight, ArrowUpRight, Boxes, CheckCircle2, CircleDotDashed, Fuel, Leaf, MapPinned, PackageCheck, Route, ScanLine, Truck, UsersRound } from "lucide-react";
+import { useState } from "react";
+import {
+  AlertTriangle,
+  ArrowDownRight,
+  ArrowUpRight,
+  Boxes,
+  CheckCircle2,
+  CircleDotDashed,
+  Clock,
+  Fuel,
+  Layers,
+  Leaf,
+  MapPin,
+  MapPinned,
+  PackageCheck,
+  RefreshCw,
+  Route,
+  Scale,
+  ScanLine,
+  Sparkles,
+  TrendingUp,
+  Truck,
+  UsersRound,
+} from "lucide-react";
 import AppShell from "@/components/AppShell";
 import { Link } from "wouter";
 import ProduceArt from "@/components/ProduceArt";
+import { RouteMap } from "@/components/RouteMap";
 import { demoFallback } from "@/lib/demoFallback";
 import { trpc } from "@/lib/trpc";
 
-const riskStyle: Record<string, string> = { Low: "bg-[#edf5e7] text-leaf", Balanced: "bg-[#eef1e6] text-forest", Watch: "bg-[#fff0e9] text-tomato" };
+const riskStyle: Record<string, string> = {
+  Low: "bg-[#edf5e7] text-leaf",
+  Balanced: "bg-[#eef1e6] text-forest",
+  Watch: "bg-[#fff0e9] text-tomato",
+};
+
+// Realistic node positions in the Krishnagiri - Chennai corridor
+const DEFAULT_WAVE_NODES = [
+  { id: "depot", name: "Krishnagiri FPO Consolidation Hub", lat: 12.5104, lng: 78.2137, demandKg: 0 },
+  { id: "farm1", name: "Farmer A Farmgate (Hosur)", lat: 12.55, lng: 78.15, demandKg: 350 },
+  { id: "farm2", name: "Farmer B Farmgate (Shoolagiri)", lat: 12.48, lng: 78.28, demandKg: 280 },
+  { id: "buyer1", name: "Green Bowl Kitchens (Adyar Bulk)", lat: 12.9906, lng: 80.2206, demandKg: 300 },
+  { id: "buyer2", name: "Besant Nagar Society Drop", lat: 13.0001, lng: 80.2667, demandKg: 150 },
+  { id: "buyer3", name: "Velachery Residential Cluster", lat: 12.9759, lng: 80.2212, demandKg: 100 },
+];
+
+const DEFAULT_PERISHABLE_LOTS = [
+  {
+    lotCode: "KHC-TOM-0826-A",
+    crop: "Tomato",
+    grade: "A",
+    totalKg: 620,
+    unitPriceInr: 28,
+    harvestedAt: new Date(Date.now() - 14 * 3600 * 1000).toISOString(), // 14 hours ago
+  },
+  {
+    lotCode: "KPF-ONI-0826-B",
+    crop: "Onion",
+    grade: "A",
+    totalKg: 980,
+    unitPriceInr: 52,
+    harvestedAt: new Date(Date.now() - 48 * 3600 * 1000).toISOString(), // 48 hours ago
+  },
+  {
+    lotCode: "HFN-GRN-0826-C",
+    crop: "Groundnut",
+    grade: "Premium",
+    totalKg: 420,
+    unitPriceInr: 96,
+    harvestedAt: new Date(Date.now() - 72 * 3600 * 1000).toISOString(), // 72 hours ago
+  },
+];
 
 export default function Operations() {
   const { data: liveData } = trpc.marketplace.demo.useQuery();
   const data = liveData ?? demoFallback;
-  const logistics = data?.logistics;
-  return <AppShell><main><section className="border-b border-line bg-[#24462e] py-12 text-white"><div className="site-container"><p className="section-eyebrow !text-[#dbecc3]">FPO & logistics workspace</p><div className="mt-3 flex flex-col justify-between gap-5 lg:flex-row lg:items-end"><div><h1 className="display-title text-5xl font-semibold leading-none">Operate the full chain,<br /><em className="not-italic text-[#dbecc3]">not just the storefront.</em></h1><p className="mt-4 max-w-2xl text-sm leading-6 text-white/70">This demo workspace connects listing readiness, FPO aggregation, demand recommendations, and a multi-stop delivery wave—so trade decisions are coordinated before the vehicle leaves.</p></div><div className="flex flex-wrap items-end gap-3"><Link href="/fpo-studio" className="action-button bg-[#dbecc3] text-forest no-underline">Open FPO studio</Link><div className="rounded-2xl border border-white/15 bg-white/5 px-4 py-3"><p className="font-mono text-[.65rem] uppercase tracking-widest text-white/50">Wave status</p><p className="mt-1 flex items-center gap-2 text-sm font-bold"><span className="h-2 w-2 rounded-full bg-[#dbecc3]" />{logistics?.status ?? "Loading"}</p></div></div></div></div></section><section className="site-container py-8"><div className="grid gap-5 xl:grid-cols-[1.28fr_.72fr]"><div><div className="flex items-end justify-between"><div><p className="section-eyebrow">Demand intelligence</p><h2 className="display-title mt-1 text-3xl font-semibold">Explain the recommendation.</h2></div><span className="pill bg-sage text-forest"><CircleDotDashed size={13} />Rules-based demo model</span></div><div className="mt-5 grid gap-4 md:grid-cols-3">{(data?.demand ?? []).map((item: any) => <article key={item.crop} className="soft-card rounded-2xl p-4"><div className="flex items-start justify-between gap-2"><span className={`pill ${riskStyle[item.risk]}`}>{item.risk} risk</span><span className="font-mono text-[.62rem] text-ink/45">{item.confidence}% conf.</span></div><h3 className="mt-5 text-base font-bold">{item.crop}</h3><div className="mt-4 grid grid-cols-2 gap-2"><div><p className="text-[.63rem] font-bold uppercase tracking-wider text-ink/45">Forecast</p><p className="mt-1 font-display text-2xl font-semibold tracking-[-.05em]">{item.forecastKg}<small className="font-sans text-xs font-normal text-ink/45"> kg</small></p></div><div><p className="text-[.63rem] font-bold uppercase tracking-wider text-ink/45">List now</p><p className="mt-1 font-display text-2xl font-semibold tracking-[-.05em] text-forest">{item.recommendedKg}<small className="font-sans text-xs font-normal text-ink/45"> kg</small></p></div></div><div className="mt-4 border-t border-line pt-3 text-xs leading-5 text-ink/65">{item.explanation}</div><div className="mt-3 flex items-center justify-between text-xs"><span className="text-ink/55">Supply buffer</span><strong>{item.surplusKg} kg</strong></div></article>)}</div><p className="source-note mt-4">Methodology: the demonstrator combines recent direct orders, committed bulk demand, public mandi-arrival direction, and planned FPO supply. It does not present the forecast as a live production model.</p></div><aside className="soft-card rounded-2xl p-5"><p className="section-eyebrow">What changed</p><h2 className="display-title mt-1 text-3xl font-semibold">Demand becomes a supply cue.</h2><div className="mt-6 space-y-5">{[[UsersRound, "Buyer signal", "Direct consumer demand + confirmed bulk requests create a clear pre-harvest and listing signal."], [Boxes, "FPO decision", "The FPO sees a recommended quantity and can hold a quality buffer rather than over-release."], [Leaf, "Waste prevention", "Smaller, timed release waves reduce unnecessary handling and preventable spoilage risk."]].map(([Icon, title, text]) => <div key={String(title)} className="flex gap-3"><span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-sage text-forest"><Icon size={18} /></span><div><p className="text-sm font-bold">{title as string}</p><p className="mt-1 text-xs leading-5 text-ink/60">{text as string}</p></div></div>)}</div></aside></div><section className="mt-10"><div className="flex items-end justify-between"><div><p className="section-eyebrow">Traceable aggregation</p><h2 className="display-title mt-1 text-3xl font-semibold">Buyer-ready lots, farmer-visible roots.</h2></div><span className="hidden text-sm text-ink/55 sm:block">Each lot maintains anonymised farmer contribution records.</span></div><div className="mt-5 grid gap-4 lg:grid-cols-2">{(data?.listings ?? []).slice(0, 2).map((listing: any) => <article key={listing.id} className="soft-card grid overflow-hidden rounded-2xl sm:grid-cols-[140px_1fr]"><ProduceArt type={listing.color} /><div className="p-4"><div className="flex flex-wrap items-center justify-between gap-2"><p className="font-bold">{listing.crop}</p><span className="pill bg-sage text-forest"><ScanLine size={13} />{listing.lotCode}</span></div><p className="mt-1 text-xs text-ink/55">{listing.fpo} · {listing.aggregation.totalKg} kg buyer-ready lot</p><div className="mt-4 grid gap-2 sm:grid-cols-3">{listing.traceability.map((entry: any) => <div key={entry.farmerCode} className="rounded-xl bg-cream p-2.5"><p className="font-mono text-[.65rem] text-forest">{entry.farmerCode}</p><p className="mt-1 text-sm font-bold">{entry.contributedKg} kg</p><p className="mt-1 text-[.65rem] leading-4 text-ink/55">{entry.harvestCluster}<br />{entry.grade} · {entry.harvestedOn}</p></div>)}</div></div></article>)}</div></section><section className="mt-10"><div className="flex items-end justify-between"><div><p className="section-eyebrow">Delivery orchestration</p><h2 className="display-title mt-1 text-3xl font-semibold">One route, more useful kilometres.</h2></div><span className="pill bg-[#edf5e7] text-leaf"><CheckCircle2 size={13} />{logistics?.status}</span></div><div className="mt-5 grid gap-4 xl:grid-cols-[1.1fr_.9fr]"><article className="relative overflow-hidden rounded-2xl bg-[#e2ead4] p-5"><div className="absolute right-0 top-0 h-full w-1/2 opacity-30" style={{ backgroundImage: "radial-gradient(#587b44 1px, transparent 1px)", backgroundSize: "16px 16px" }} /><div className="relative"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="font-mono text-[.65rem] uppercase tracking-widest text-leaf">{logistics?.planCode}</p><h3 className="mt-1 text-xl font-bold">{logistics?.cluster}</h3><p className="mt-2 text-sm text-ink/65">{logistics?.vehicle}</p></div><div className="rounded-xl bg-paper px-3 py-2 text-right shadow-sm"><p className="text-[.62rem] font-bold uppercase tracking-widest text-ink/45">Capacity used</p><p className="font-display text-xl font-semibold">{logistics?.utilizationPercent}%</p></div></div><div className="mt-7 space-y-0">{logistics?.stops.map((stop: any, index: number) => <div key={stop.name} className="flex gap-3"><div className="flex w-5 flex-col items-center"><span className={`grid h-5 w-5 place-items-center rounded-full text-[.6rem] font-bold ${stop.kind === "origin" ? "bg-forest text-white" : stop.kind === "bulk" ? "bg-saffron text-white" : "bg-paper text-forest"}`}>{stop.order}</span>{index < logistics.stops.length - 1 && <span className="h-8 w-px bg-leaf/35" />}</div><div className="pb-3"><p className="text-sm font-bold">{stop.name}</p><p className="text-xs text-ink/60">{stop.detail}</p></div></div>)}</div></div></article><article className="soft-card rounded-2xl p-5"><div className="flex items-center gap-2"><Route size={19} className="text-leaf" /><h3 className="font-bold">Route comparison</h3></div><div className="mt-5 grid grid-cols-2 gap-3"><div className="rounded-xl bg-cream p-3"><p className="text-[.64rem] font-bold uppercase tracking-widest text-ink/45">Baseline</p><p className="mt-2 font-display text-3xl font-semibold">{logistics?.routeComparison.baselineKm ?? 86}<small className="font-sans text-xs font-normal text-ink/50"> km</small></p><p className="mt-1 text-xs text-ink/55">Separate trips</p></div><div className="rounded-xl bg-[#edf5e7] p-3"><p className="text-[.64rem] font-bold uppercase tracking-widest text-leaf">Consolidated</p><p className="mt-2 font-display text-3xl font-semibold text-forest">{logistics?.routeComparison.optimizedKm ?? 54}<small className="font-sans text-xs font-normal text-ink/50"> km</small></p><p className="mt-1 text-xs text-ink/55">Clustered wave</p></div></div><div className="mt-5 grid grid-cols-3 gap-2 text-center">{[[Truck, `${logistics?.routeComparison.kmSaved ?? 32} km`, "saved"], [Fuel, `₹${logistics?.routeComparison.costSaved ?? 860}`, "cost saved"], [ArrowDownRight, `${logistics?.routeComparison.emissionsSavedKg ?? 9} kg`, "CO₂e saved"]].map(([Icon, value, label]) => <div key={String(label)}><Icon size={16} className="mx-auto text-leaf" /><p className="mt-1 text-sm font-bold">{value as string}</p><p className="text-[.62rem] text-ink/55">{label as string}</p></div>)}</div><p className="source-note mt-5">Estimated route savings are calculated against the demo’s separate-trip baseline. Emissions are illustrative planning estimates, not verified carbon credits.</p></article></div></section></section></main></AppShell>;
+  const staticLogistics = data?.logistics;
+
+  // Live dynamic route optimizer mutation
+  const optimizeMutation = trpc.operations.optimizeWave.useMutation();
+  const [livePlan, setLivePlan] = useState<any>(null);
+
+  // Regional Geo-clustering query
+  const { data: geoClusters } = trpc.operations.clusterGeoNodes.useQuery({
+    points: DEFAULT_WAVE_NODES,
+    maxRadiusKm: 30.0,
+  });
+
+  // Perishable Spoilage Priority query
+  const { data: spoilagePriorities } = trpc.operations.evaluateSpoilagePriority.useQuery({
+    lots: DEFAULT_PERISHABLE_LOTS,
+  });
+
+  // Fetch real road polyline geometry from OSRM
+  const { data: routeGeo } = trpc.operations.routeGeometry.useQuery({
+    waypoints: DEFAULT_WAVE_NODES.map((n) => ({ lat: n.lat, lng: n.lng })),
+  });
+
+  const handleRunOptimization = () => {
+    optimizeMutation.mutate(
+      {
+        nodes: DEFAULT_WAVE_NODES,
+        vehicleCapacityKg: 1200,
+        maxVehicles: 2,
+      },
+      {
+        onSuccess: (result) => {
+          setLivePlan(result);
+        },
+      }
+    );
+  };
+
+  const currentKmSaved = livePlan ? livePlan.kmSaved : staticLogistics?.routeComparison?.kmSaved ?? 32;
+  const currentCostSaved = livePlan ? livePlan.costSavedInr : staticLogistics?.routeComparison?.costSaved ?? 860;
+  const currentEmissions = livePlan ? livePlan.emissionsSavedKgCo2e : staticLogistics?.routeComparison?.emissionsSavedKg ?? 9;
+  const currentOptimizedKm = livePlan ? livePlan.optimizedKm : staticLogistics?.routeComparison?.optimizedKm ?? 54;
+  const currentBaselineKm = livePlan ? livePlan.baselineKm : staticLogistics?.routeComparison?.baselineKm ?? 86;
+  const currentUtil = livePlan ? livePlan.utilizationPercent : staticLogistics?.utilizationPercent ?? 82;
+
+  const currentStops = livePlan?.routes?.[0]?.stops ?? staticLogistics?.stops ?? [];
+
+  return (
+    <AppShell>
+      <main>
+        {/* Hero Section */}
+        <section className="border-b border-line bg-[#24462e] py-12 text-white">
+          <div className="site-container">
+            <p className="section-eyebrow !text-[#dbecc3]">FPO & logistics workspace</p>
+            <div className="mt-3 flex flex-col justify-between gap-5 lg:flex-row lg:items-end">
+              <div>
+                <h1 className="display-title text-5xl font-semibold leading-none">
+                  Operate the full chain,
+                  <br />
+                  <em className="not-italic text-[#dbecc3]">not just the storefront.</em>
+                </h1>
+                <p className="mt-4 max-w-2xl text-sm leading-6 text-white/70">
+                  This workspace coordinates harvest pooling, regional geo-clustering, perishable shelf-life decay, and
+                  open-source OSRM + CVRP multi-stop vehicle dispatch.
+                </p>
+              </div>
+              <div className="flex flex-wrap items-end gap-3">
+                <Link href="/fpo-studio" className="action-button bg-[#dbecc3] text-forest no-underline">
+                  Open FPO studio
+                </Link>
+                <div className="rounded-2xl border border-white/15 bg-white/5 px-4 py-3">
+                  <p className="font-mono text-[.65rem] uppercase tracking-widest text-white/50">Wave status</p>
+                  <p className="mt-1 flex items-center gap-2 text-sm font-bold">
+                    <span className="h-2 w-2 rounded-full bg-[#dbecc3]" />
+                    {livePlan ? "Dynamic OSRM Solved" : staticLogistics?.status ?? "Ready to dispatch"}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* Demand & Live Dispatch Section */}
+        <section className="site-container py-8">
+          <div className="grid gap-5 xl:grid-cols-[1.28fr_.72fr]">
+            <div className="space-y-6">
+              {/* Demand Intelligence Grid */}
+              <div>
+                <div className="flex items-end justify-between">
+                  <div>
+                    <p className="section-eyebrow">Demand intelligence</p>
+                    <h2 className="display-title mt-1 text-3xl font-semibold">Explain the recommendation.</h2>
+                  </div>
+                  <span className="pill bg-sage text-forest">
+                    <CircleDotDashed size={13} />
+                    Elasticity & EMA time-series model
+                  </span>
+                </div>
+
+                <div className="mt-5 grid gap-4 md:grid-cols-3">
+                  {(data?.demand ?? []).map((item: any) => (
+                    <article key={item.crop} className="soft-card rounded-2xl p-4">
+                      <div className="flex items-start justify-between gap-2">
+                        <span className={`pill ${riskStyle[item.risk] ?? "bg-[#edf5e7] text-leaf"}`}>{item.risk} risk</span>
+                        <span className="font-mono text-[.62rem] text-ink/45">{item.confidence}% conf.</span>
+                      </div>
+                      <div className="mt-4 flex items-center gap-3">
+                        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-sage/60">
+                          <ProduceArt
+                            type={
+                              item.crop.toLowerCase().includes("tomato")
+                                ? "tomato"
+                                : item.crop.toLowerCase().includes("onion")
+                                ? "onion"
+                                : "groundnut"
+                            }
+                            compact
+                          />
+                        </div>
+                        <div>
+                          <h3 className="font-semibold leading-tight text-ink">{item.crop}</h3>
+                          <p className="text-xs text-ink/60">Forecast: {item.forecastKg} kg</p>
+                        </div>
+                      </div>
+                      <p className="mt-3 text-xs leading-5 text-ink/75">{item.explanation}</p>
+                      <div className="mt-4 border-t border-line/60 pt-3 text-[.7rem] text-ink/60">
+                        <span>Recommend: <strong>{item.recommendedKg} kg</strong></span> · <span>Surplus: {item.surplusKg} kg</span>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              </div>
+
+              {/* Regional Geo-Clustering & Perishable Priority Cards */}
+              <div className="grid gap-5 md:grid-cols-2">
+                {/* Regional Geo-Clusters */}
+                <div className="soft-card rounded-3xl p-5 border border-line/70">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Layers className="h-5 w-5 text-leaf" />
+                      <h3 className="text-base font-bold text-ink">Regional Geo-Clusters (DBSCAN)</h3>
+                    </div>
+                    <span className="pill bg-sage text-forest">{geoClusters?.length ?? 0} Zones</span>
+                  </div>
+                  <p className="mt-2 text-xs text-ink/60">
+                    Groups pickup farmgates and buyer drops by geographic proximity (30 km density radius) before routing.
+                  </p>
+                  <div className="mt-4 space-y-2.5">
+                    {(geoClusters ?? []).map((cluster) => (
+                      <div key={cluster.clusterId} className="rounded-xl bg-white p-3 text-xs border border-line/50">
+                        <div className="flex items-center justify-between font-bold text-ink">
+                          <span>{cluster.clusterName}</span>
+                          <span className="font-mono text-leaf">{cluster.totalDemandKg} kg pooled</span>
+                        </div>
+                        <p className="mt-1 text-[11px] text-ink/50">
+                          {cluster.points.length} nodes · Radius: {cluster.radiusKm} km · Centroid: {cluster.center.lat.toFixed(3)}, {cluster.center.lng.toFixed(3)}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Perishable Shelf-Life Decay Ranking */}
+                <div className="soft-card rounded-3xl p-5 border border-line/70">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Clock className="h-5 w-5 text-tomato" />
+                      <h3 className="text-base font-bold text-ink">Perishable Decay & Priority</h3>
+                    </div>
+                    <span className="pill bg-[#fff0e9] text-tomato">Q(t) = Q₀·e^(-kt)</span>
+                  </div>
+                  <p className="mt-2 text-xs text-ink/60">
+                    Decay-based dispatch sequencing ensures high-deterioration crops leave on the earliest wave.
+                  </p>
+                  <div className="mt-4 space-y-2.5">
+                    {(spoilagePriorities ?? []).map((lot) => (
+                      <div key={lot.lotCode} className="rounded-xl bg-white p-3 text-xs border border-line/50">
+                        <div className="flex items-center justify-between font-bold text-ink">
+                          <span>
+                            #{lot.dispatchUrgencyRank} {lot.crop} ({lot.lotCode})
+                          </span>
+                          <span className={lot.spoilageRiskLevel === "Critical" || lot.spoilageRiskLevel === "High" ? "text-tomato" : "text-leaf"}>
+                            {lot.currentQualityScore}% Quality
+                          </span>
+                        </div>
+                        <div className="mt-1 flex items-center justify-between text-[11px] text-ink/60">
+                          <span>Shelf-life left: <strong>{lot.remainingShelfLifeHours}h</strong></span>
+                          <span>Risk: <strong>{lot.spoilageRiskLevel}</strong></span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Dynamic Route Optimizer Card */}
+              <div className="soft-card rounded-3xl p-6">
+                <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <Route className="h-5 w-5 text-leaf" />
+                      <h3 className="text-lg font-bold text-ink">Dynamic OSRM + CVRP Dispatch Wave</h3>
+                    </div>
+                    <p className="mt-1 text-xs text-ink/60">
+                      Solves multi-stop farmgate pickup and urban buyer delivery over OpenStreetMap road networks.
+                    </p>
+                  </div>
+                  <button
+                    onClick={handleRunOptimization}
+                    disabled={optimizeMutation.isPending}
+                    className="action-button flex items-center gap-2 bg-forest text-white hover:bg-forest/90 disabled:opacity-50"
+                  >
+                    {optimizeMutation.isPending ? (
+                      <RefreshCw className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Sparkles className="h-4 w-4 text-[#dbecc3]" />
+                    )}
+                    <span>{optimizeMutation.isPending ? "Calculating OSRM Matrix..." : "Recalculate Dynamic Route"}</span>
+                  </button>
+                </div>
+
+                {/* Efficiency KPIs */}
+                <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  <div className="rounded-2xl border border-line/70 bg-white/60 p-4">
+                    <p className="font-mono text-[.62rem] uppercase tracking-wider text-ink/50">Road Distance</p>
+                    <p className="mt-1 text-xl font-bold text-ink">{currentOptimizedKm} km</p>
+                    <p className="text-[.68rem] text-ink/50">vs {currentBaselineKm} km baseline</p>
+                  </div>
+                  <div className="rounded-2xl border border-line/70 bg-white/60 p-4">
+                    <p className="font-mono text-[.62rem] uppercase tracking-wider text-ink/50">Km Avoided</p>
+                    <p className="mt-1 flex items-center gap-1 text-xl font-bold text-leaf">
+                      <ArrowDownRight size={18} />
+                      {currentKmSaved} km
+                    </p>
+                    <p className="text-[.68rem] text-leaf/80">Consolidated pooling</p>
+                  </div>
+                  <div className="rounded-2xl border border-line/70 bg-white/60 p-4">
+                    <p className="font-mono text-[.62rem] uppercase tracking-wider text-ink/50">Fuel Cost Saved</p>
+                    <p className="mt-1 text-xl font-bold text-ink">₹{currentCostSaved}</p>
+                    <p className="text-[.68rem] text-ink/50">₹22/km LCV rate</p>
+                  </div>
+                  <div className="rounded-2xl border border-line/70 bg-white/60 p-4">
+                    <p className="font-mono text-[.62rem] uppercase tracking-wider text-ink/50">CO₂e Avoided</p>
+                    <p className="mt-1 flex items-center gap-1 text-xl font-bold text-leaf">
+                      <Leaf size={16} />
+                      {currentEmissions} kg
+                    </p>
+                    <p className="text-[.68rem] text-ink/50">0.24 kg/km diesel</p>
+                  </div>
+                </div>
+
+                {/* Interactive Leaflet/SVG Route Map */}
+                <div className="mt-6 border-t border-line/60 pt-5">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-ink/60 mb-3">
+                    Live OpenStreetMap GPS Waypoints & Transit Polyline
+                  </p>
+                  <RouteMap
+                    stops={DEFAULT_WAVE_NODES.map((n, i) => ({
+                      id: n.id,
+                      name: n.name,
+                      lat: n.lat,
+                      lng: n.lng,
+                      demandKg: n.demandKg,
+                      type: i === 0 ? "depot" : n.id.startsWith("farm") ? "farm" : "buyer",
+                    }))}
+                    polyline={routeGeo?.coordinates}
+                  />
+                </div>
+
+                {/* Stop Sequence Timeline */}
+                <div className="mt-6 border-t border-line/60 pt-5">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-ink/60">
+                    Planned Stop Sequence (Depot → Drops → Return)
+                  </p>
+                  <div className="mt-3 space-y-2">
+                    {currentStops.map((stop: any, idx: number) => (
+                      <div
+                        key={stop.nodeId ?? `${stop.name ?? "stop"}-${idx}`}
+                        className="flex items-center justify-between rounded-xl bg-white/80 p-3 text-xs border border-line/50"
+                      >
+                        <div className="flex items-center gap-3">
+                          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-forest text-[10px] font-bold text-white">
+                            {idx + 1}
+                          </span>
+                          <span className="font-medium text-ink">{stop.name}</span>
+                        </div>
+                        <span className="font-mono text-[.68rem] text-ink/60">
+                          {stop.cumulativeLoadKg !== undefined
+                            ? `Cumulative load: ${stop.cumulativeLoadKg} kg`
+                            : stop.detail ?? "Verified route node"}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Right Column: Vehicle Readiness & Impact */}
+            <div className="space-y-4">
+              <div className="soft-card rounded-3xl p-6">
+                <div className="flex items-center justify-between">
+                  <h3 className="font-bold text-ink">LCV Load Utilization</h3>
+                  <span className="pill bg-sage text-forest">{currentUtil}% full</span>
+                </div>
+                <div className="mt-4 h-3 w-full overflow-hidden rounded-full bg-sage/60">
+                  <div
+                    className="h-full rounded-full bg-forest transition-all duration-500"
+                    style={{ width: `${Math.min(100, currentUtil)}%` }}
+                  />
+                </div>
+                <p className="mt-3 text-xs text-ink/60">
+                  Electric / Diesel Light Commercial Vehicle (1.2 Tonne Payload Capacity).
+                </p>
+              </div>
+
+              <div className="soft-card rounded-3xl p-6">
+                <h3 className="font-bold text-ink">DoCA Supply-Chain Metrics</h3>
+                <div className="mt-4 space-y-3 text-xs">
+                  <div className="flex justify-between border-b border-line/40 pb-2">
+                    <span className="text-ink/60">Disintermediation Gain</span>
+                    <span className="font-bold text-leaf">+{data?.impact?.farmerIncomeUpliftPercent ?? 34}% to farmers</span>
+                  </div>
+                  <div className="flex justify-between border-b border-line/40 pb-2">
+                    <span className="text-ink/60">Buyer Direct Savings</span>
+                    <span className="font-bold text-ink">₹{data?.impact?.buyerSavingsInr ?? 14680}</span>
+                  </div>
+                  <div className="flex justify-between border-b border-line/40 pb-2">
+                    <span className="text-ink/60">Post-Harvest Waste Avoided</span>
+                    <span className="font-bold text-leaf">{data?.impact?.wasteAvoidedKg ?? 186} kg</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-ink/60">On-Time Dispatch SLA</span>
+                    <span className="font-bold text-ink">{data?.impact?.onTimeDeliveryPercent ?? 96}%</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+    </AppShell>
+  );
 }

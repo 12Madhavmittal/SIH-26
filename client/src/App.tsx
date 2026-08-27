@@ -9,9 +9,21 @@ import Impact from "./pages/Impact";
 import Marketplace from "./pages/Marketplace";
 import NotFound from "./pages/NotFound";
 import Operations from "./pages/Operations";
+import TraceLot from "./pages/TraceLot";
 
 function Router() {
-  return <Switch><Route path="/" component={Home} /><Route path="/marketplace" component={Marketplace} /><Route path="/operations" component={Operations} /><Route path="/fpo-studio" component={FpoStudio} /><Route path="/impact" component={Impact} /><Route path="/404" component={NotFound} /><Route component={NotFound} /></Switch>;
+  return (
+    <Switch>
+      <Route path="/" component={Home} />
+      <Route path="/marketplace" component={Marketplace} />
+      <Route path="/operations" component={Operations} />
+      <Route path="/fpo-studio" component={FpoStudio} />
+      <Route path="/impact" component={Impact} />
+      <Route path="/trace/:lotCode" component={TraceLot} />
+      <Route path="/404" component={NotFound} />
+      <Route component={NotFound} />
+    </Switch>
+  );
 }
 
 function App() {

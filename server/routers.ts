@@ -20,6 +20,14 @@ import { optimizeWave } from "./logisticsEngine";
 import { getMandiHistory, getMandiRate } from "./integrations/mandiEngine";
 import { generateCropForecast } from "./demandForecast";
 import { parseVoiceListing } from "./voiceListing";
+import { clusterGeoPoints } from "./geoClustering";
+import { evaluateProduceSpoilage, prioritizeDispatchWave } from "./spoilageDecay";
+import { calculateMultiMandiArbitrage } from "./mandiArbitrage";
+import { fetchRouteGeometry } from "./routeGeometry";
+import { buildQrProvenancePayload, generateQrSvgString } from "./qrGenerator";
+import { createEscrowAccount, transitionEscrowState, type EscrowState } from "./escrowEngine";
+import { createSocietyPool, addMemberOrderToPool, type SocietyMemberOrder } from "./societyPooling";
+import { formatOndcCatalog } from "./ondc/protocol";
 
 const fpoProcedure = protectedProcedure.use(({ ctx, next }) => {
   if (ctx.user.role !== "admin" && ctx.user.role !== "fpo") {
@@ -164,9 +172,164 @@ export const appRouter = router({
         const result = await lookupLotTraceability(input.lotCode);
         return result;
       }),
+    qrProvenance: publicProcedure
+      .input(
+        z.object({
+          lotCode: z.string(),
+          crop: z.string(),
+          grade: z.string().default("A"),
+          totalKg: z.number().default(500),
+          originHub: z.string().default("Krishnagiri FPO Hub"),
+        })
+      )
+      .query(({ input }) => {
+        const payload = buildQrProvenancePayload(input);
+        const qrSvg = generateQrSvgString(payload.verificationUrl);
+        return { payload, qrSvg };
+      }),
+    createEscrow: publicProcedure
+      .input(
+        z.object({
+          orderId: z.string(),
+          totalAmountInr: z.number().positive(),
+          farmerUpiId: z.string().optional(),
+        })
+      )
+      .mutation(({ input }) => createEscrowAccount(input)),
+    transitionEscrow: publicProcedure
+      .input(
+        z.object({
+          account: z.any(),
+          nextState: z.enum([
+            "INITIATED",
+            "FUNDS_LOCKED",
+            "DISPATCH_ADVANCE_RELEASED",
+            "SETTLED_COMPLETE",
+            "REFUNDED",
+          ]),
+        })
+      )
+      .mutation(({ input }) => transitionEscrowState(input.account, input.nextState as EscrowState)),
+    createSocietyPool: publicProcedure
+      .input(
+        z.object({
+          societyId: z.string(),
+          societyName: z.string(),
+          locality: z.string(),
+          city: z.string().default("Chennai"),
+          dropLat: z.number().default(12.9906),
+          dropLng: z.number().default(80.2206),
+          crop: z.string(),
+          targetMinimumKg: z.number().default(200),
+          baseRetailPricePerKg: z.number().default(28),
+        })
+      )
+      .mutation(({ input }) => createSocietyPool(input)),
+    addOrderToSocietyPool: publicProcedure
+      .input(
+        z.object({
+          pool: z.any(),
+          order: z.object({
+            residentName: z.string(),
+            flatNumber: z.string(),
+            quantityKg: z.number().positive(),
+          }),
+        })
+      )
+      .mutation(({ input }) => addMemberOrderToPool(input.pool, input.order)),
+    exportOndcCatalog: publicProcedure
+      .input(
+        z.object({
+          district: z.string().default("Krishnagiri"),
+        })
+      )
+      .query(({ input }) => formatOndcCatalog(demoListings, "Krishnagiri Harvest Collective FPO", input.district)),
     parseVoiceListing: publicProcedure
       .input(z.object({ transcript: z.string().min(1).max(1000) }))
       .mutation(({ input }) => parseVoiceListing(input.transcript)),
+    routeGeometry: operationsProcedure
+      .input(
+        z.object({
+          waypoints: z
+            .array(
+              z.object({
+                lat: z.number().min(-90).max(90),
+                lng: z.number().min(-180).max(180),
+              })
+            )
+            .min(2)
+            .max(25),
+        })
+      )
+      .query(({ input }) => fetchRouteGeometry(input.waypoints)),
+    clusterGeoNodes: operationsProcedure
+      .input(
+        z.object({
+          points: z.array(
+            z.object({
+              id: z.string(),
+              name: z.string(),
+              lat: z.number().min(-90).max(90),
+              lng: z.number().min(-180).max(180),
+              demandKg: z.number().optional(),
+            })
+          ),
+          maxRadiusKm: z.number().positive().default(25.0),
+        })
+      )
+      .query(({ input }) => clusterGeoPoints(input.points, input.maxRadiusKm)),
+    evaluateSpoilagePriority: operationsProcedure
+      .input(
+        z.object({
+          lots: z.array(
+            z.object({
+              lotCode: z.string(),
+              crop: z.string(),
+              grade: z.string().default("A"),
+              totalKg: z.number().positive(),
+              unitPriceInr: z.number().positive(),
+              harvestedAt: z.string(),
+              isRefrigerated: z.boolean().optional(),
+            })
+          ),
+        })
+      )
+      .query(({ input }) => prioritizeDispatchWave(input.lots)),
+    mandiArbitrageMatrix: publicProcedure
+      .input(
+        z.object({
+          commodity: z.string(),
+          quantityKg: z.number().positive().default(1000),
+          originHub: z.object({
+            name: z.string().default("Krishnagiri FPO Hub"),
+            lat: z.number().default(12.5104),
+            lng: z.number().default(78.2137),
+          }),
+          directAppOfferPerKg: z.number().positive().default(28.0),
+          mandis: z
+            .array(
+              z.object({
+                mandiName: z.string(),
+                district: z.string(),
+                state: z.string(),
+                lat: z.number(),
+                lng: z.number(),
+                modalPricePerKg: z.number().positive(),
+                cessPercent: z.number().optional(),
+              })
+            )
+            .min(1),
+        })
+      )
+      .query(({ input }) =>
+        calculateMultiMandiArbitrage(
+          input.commodity,
+          input.quantityKg,
+          input.originHub,
+          input.mandis,
+          input.directAppOfferPerKg
+        )
+      ),
   }),
 });
 
