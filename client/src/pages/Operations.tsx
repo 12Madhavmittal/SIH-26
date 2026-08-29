@@ -77,13 +77,15 @@ export default function Operations() {
   const data = liveData ?? demoFallback;
   const staticLogistics = data?.logistics;
 
+  const [customNodes, setCustomNodes] = useState(DEFAULT_WAVE_NODES);
+
   // Live dynamic route optimizer mutation
   const optimizeMutation = trpc.operations.optimizeWave.useMutation();
   const [livePlan, setLivePlan] = useState<any>(null);
 
   // Regional Geo-clustering query
   const { data: geoClusters } = trpc.operations.clusterGeoNodes.useQuery({
-    points: DEFAULT_WAVE_NODES,
+    points: customNodes,
     maxRadiusKm: 30.0,
   });
 
@@ -92,15 +94,10 @@ export default function Operations() {
     lots: DEFAULT_PERISHABLE_LOTS,
   });
 
-  // Fetch real road polyline geometry from OSRM
-  const { data: routeGeo } = trpc.operations.routeGeometry.useQuery({
-    waypoints: DEFAULT_WAVE_NODES.map((n) => ({ lat: n.lat, lng: n.lng })),
-  });
-
   const handleRunOptimization = () => {
     optimizeMutation.mutate(
       {
-        nodes: DEFAULT_WAVE_NODES,
+        nodes: customNodes,
         vehicleCapacityKg: 1200,
         maxVehicles: 2,
       },
@@ -112,6 +109,12 @@ export default function Operations() {
     );
   };
 
+  const handleStopDragEnd = (stopId: string, newLat: number, newLng: number) => {
+    setCustomNodes((prev) =>
+      prev.map((n) => (n.id === stopId ? { ...n, lat: Number(newLat.toFixed(4)), lng: Number(newLng.toFixed(4)) } : n))
+    );
+  };
+
   const currentKmSaved = livePlan ? livePlan.kmSaved : staticLogistics?.routeComparison?.kmSaved ?? 32;
   const currentCostSaved = livePlan ? livePlan.costSavedInr : staticLogistics?.routeComparison?.costSaved ?? 860;
   const currentEmissions = livePlan ? livePlan.emissionsSavedKgCo2e : staticLogistics?.routeComparison?.emissionsSavedKg ?? 9;
@@ -120,6 +123,28 @@ export default function Operations() {
   const currentUtil = livePlan ? livePlan.utilizationPercent : staticLogistics?.utilizationPercent ?? 82;
 
   const currentStops = livePlan?.routes?.[0]?.stops ?? staticLogistics?.stops ?? [];
+  const selectedRouteNodeIds: string[] | null =
+    livePlan?.routes?.[0]?.stops?.map((stop: { nodeId: string }) => stop.nodeId) ?? null;
+  const nodeById = new Map(customNodes.map((node) => [node.id, node]));
+  const mapRouteNodes = selectedRouteNodeIds
+    ? selectedRouteNodeIds
+        .map((id) => nodeById.get(id))
+        .filter((node): node is (typeof DEFAULT_WAVE_NODES)[number] => Boolean(node))
+    : [
+        ...customNodes,
+        { ...customNodes[0], id: "depot-return", name: "Return to Krishnagiri FPO Hub" },
+      ];
+  const mapStops = mapRouteNodes.map((node, index) => ({
+    ...node,
+    type:
+      node.id === "depot-return" || (index === mapRouteNodes.length - 1 && node.id === "depot")
+        ? ("return" as const)
+        : node.id === "depot"
+          ? ("depot" as const)
+          : node.id.startsWith("farm")
+            ? ("farm" as const)
+            : ("buyer" as const),
+  }));
 
   return (
     <AppShell>
@@ -275,10 +300,10 @@ export default function Operations() {
                   <div>
                     <div className="flex items-center gap-2">
                       <Route className="h-5 w-5 text-leaf" />
-                      <h3 className="text-lg font-bold text-ink">Dynamic OSRM + CVRP Dispatch Wave</h3>
+                      <h3 className="text-lg font-bold text-ink">CVRP Dispatch Wave + Google Road View</h3>
                     </div>
                     <p className="mt-1 text-xs text-ink/60">
-                      Solves multi-stop farmgate pickup and urban buyer delivery over OpenStreetMap road networks.
+                      Solves the dispatch wave over an OSRM road matrix, then renders the selected stop order on Google Maps.
                     </p>
                   </div>
                   <button
@@ -291,7 +316,7 @@ export default function Operations() {
                     ) : (
                       <Sparkles className="h-4 w-4 text-[#dbecc3]" />
                     )}
-                    <span>{optimizeMutation.isPending ? "Calculating OSRM Matrix..." : "Recalculate Dynamic Route"}</span>
+                    <span>{optimizeMutation.isPending ? "Calculating route matrix..." : "Recalculate Dynamic Route"}</span>
                   </button>
                 </div>
 
@@ -325,22 +350,12 @@ export default function Operations() {
                   </div>
                 </div>
 
-                {/* Interactive Leaflet/SVG Route Map */}
+                {/* Google Maps renders road geometry for the chosen dispatch order. */}
                 <div className="mt-6 border-t border-line/60 pt-5">
                   <p className="text-xs font-semibold uppercase tracking-wider text-ink/60 mb-3">
-                    Live OpenStreetMap GPS Waypoints & Transit Polyline
+                    Selected Dispatch Route
                   </p>
-                  <RouteMap
-                    stops={DEFAULT_WAVE_NODES.map((n, i) => ({
-                      id: n.id,
-                      name: n.name,
-                      lat: n.lat,
-                      lng: n.lng,
-                      demandKg: n.demandKg,
-                      type: i === 0 ? "depot" : n.id.startsWith("farm") ? "farm" : "buyer",
-                    }))}
-                    polyline={routeGeo?.coordinates}
-                  />
+                  <RouteMap stops={mapStops} onStopDragEnd={handleStopDragEnd} />
                 </div>
 
                 {/* Stop Sequence Timeline */}

@@ -18,7 +18,9 @@ export type EscrowState =
   | "INITIATED"
   | "FUNDS_LOCKED"
   | "DISPATCH_ADVANCE_RELEASED"
+  | "DELIVERY_CONFIRMED"
   | "SETTLED_COMPLETE"
+  | "DISPUTED_HOLD"
   | "REFUNDED";
 
 export interface EscrowAccount {
@@ -92,8 +94,10 @@ export function transitionEscrowState(
 ): EscrowAccount {
   const allowedTransitions: Record<EscrowState, EscrowState[]> = {
     INITIATED: ["FUNDS_LOCKED", "REFUNDED"],
-    FUNDS_LOCKED: ["DISPATCH_ADVANCE_RELEASED", "REFUNDED"],
-    DISPATCH_ADVANCE_RELEASED: ["SETTLED_COMPLETE", "REFUNDED"],
+    FUNDS_LOCKED: ["DISPATCH_ADVANCE_RELEASED", "DISPUTED_HOLD", "REFUNDED"],
+    DISPATCH_ADVANCE_RELEASED: ["DELIVERY_CONFIRMED", "SETTLED_COMPLETE", "DISPUTED_HOLD", "REFUNDED"],
+    DELIVERY_CONFIRMED: ["SETTLED_COMPLETE", "DISPUTED_HOLD", "REFUNDED"],
+    DISPUTED_HOLD: ["SETTLED_COMPLETE", "REFUNDED"],
     SETTLED_COMPLETE: [],
     REFUNDED: [],
   };
@@ -113,6 +117,10 @@ export function transitionEscrowState(
     // 50% logistics & FPO fee released on vehicle departure
     releasedAmount = Math.round((account.logisticsInr + account.fpoServiceInr) * 0.5);
     note = `Vehicle dispatched via GPS tracking. Initial ₹${releasedAmount} advance credited to logistics and FPO accounts.`;
+  } else if (nextState === "DELIVERY_CONFIRMED") {
+    note = "Digital proof-of-delivery (e-POD) signed by recipient. Preparing automated 100% UPI settlement.";
+  } else if (nextState === "DISPUTED_HOLD") {
+    note = "Dispute raised by party. Payout locked in escrow pending arbitration resolution.";
   } else if (nextState === "SETTLED_COMPLETE") {
     // 100% of remaining balance including full farmer payout released
     releasedAmount = account.totalAmountInr;
@@ -135,3 +143,4 @@ export function transitionEscrowState(
     ],
   };
 }
+

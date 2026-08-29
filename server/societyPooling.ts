@@ -14,6 +14,7 @@ export interface SocietyMemberOrder {
   residentName: string;
   flatNumber: string;
   quantityKg: number;
+  phone?: string;
 }
 
 export interface SocietyPoolGroup {
@@ -34,6 +35,28 @@ export interface SocietyPoolGroup {
   lastMileStopsAvoided: number;
 }
 
+/** In-memory fallback registry of society pools */
+const memoryPools = new Map<string, SocietyPoolGroup>();
+
+export function getMemoryPool(poolId: string): SocietyPoolGroup | undefined {
+  return memoryPools.get(poolId);
+}
+
+export function setMemoryPool(pool: SocietyPoolGroup): void {
+  memoryPools.set(pool.societyId, pool);
+}
+
+export function calculateTieredDiscount(totalKg: number, basePrice: number): { discountPercent: number; pricePerKg: number } {
+  let discountPercent = 0;
+  if (totalKg >= 250) {
+    discountPercent = 15;
+  } else if (totalKg >= 100) {
+    discountPercent = 8;
+  }
+  const pricePerKg = Number((basePrice * (1 - discountPercent / 100)).toFixed(2));
+  return { discountPercent, pricePerKg };
+}
+
 export function createSocietyPool(input: {
   societyId: string;
   societyName: string;
@@ -49,7 +72,7 @@ export function createSocietyPool(input: {
   // Society pooling unlocks 15% wholesale discount
   const discounted = Number((input.baseRetailPricePerKg * 0.85).toFixed(2));
 
-  return {
+  const pool: SocietyPoolGroup = {
     ...input,
     targetMinimumKg: target,
     orders: [],
@@ -59,6 +82,8 @@ export function createSocietyPool(input: {
     totalSocietySavingsInr: 0,
     lastMileStopsAvoided: 0,
   };
+  setMemoryPool(pool);
+  return pool;
 }
 
 export function addMemberOrderToPool(
@@ -72,7 +97,9 @@ export function addMemberOrderToPool(
   const updatedOrders = [...pool.orders, order];
   const totalPooledKg = updatedOrders.reduce((s, o) => s + o.quantityKg, 0);
 
-  const priceDiffPerKg = pool.baseRetailPricePerKg - pool.discountedPooledPricePerKg;
+  const { pricePerKg: discountedPrice } = calculateTieredDiscount(totalPooledKg, pool.baseRetailPricePerKg);
+  const effectivePrice = Math.min(pool.discountedPooledPricePerKg, discountedPrice);
+  const priceDiffPerKg = pool.baseRetailPricePerKg - effectivePrice;
   const totalSocietySavingsInr = Math.round(totalPooledKg * priceDiffPerKg);
   const lastMileStopsAvoided = Math.max(0, updatedOrders.length - 1);
 
@@ -81,12 +108,16 @@ export function addMemberOrderToPool(
     poolStatus = "TARGET_MET";
   }
 
-  return {
+  const updatedPool: SocietyPoolGroup = {
     ...pool,
     orders: updatedOrders,
     totalPooledKg,
+    discountedPooledPricePerKg: effectivePrice,
     totalSocietySavingsInr,
     lastMileStopsAvoided,
     poolStatus,
   };
+  setMemoryPool(updatedPool);
+  return updatedPool;
 }
+

@@ -46,6 +46,8 @@ export default function Marketplace() {
   const [memberKg, setMemberKg] = useState(25);
   const [poolMessage, setPoolMessage] = useState("");
 
+  const joinPoolMutation = trpc.operations.addOrderToSocietyPool.useMutation();
+
   const handleJoinSocietyPool = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const name = residentName.trim();
@@ -62,10 +64,16 @@ export default function Marketplace() {
       orders: updatedOrders,
       totalPooledKg: totalPooled,
     }));
+
+    joinPoolMutation.mutate({
+      pool: societyPool,
+      order: newOrder,
+    });
+
     setResidentName("");
     setFlatNumber("");
     setMemberKg(25);
-    setPoolMessage(`${name}'s ${memberKg} kg request was added to the delivery wave.`);
+    setPoolMessage(`✓ ${name}'s ${memberKg} kg request persisted and added to the delivery wave!`);
   };
 
   const openListingFromKeyboard = (event: KeyboardEvent<HTMLElement>, item: any) => {

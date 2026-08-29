@@ -28,6 +28,18 @@ import { buildQrProvenancePayload, generateQrSvgString } from "./qrGenerator";
 import { createEscrowAccount, transitionEscrowState, type EscrowState } from "./escrowEngine";
 import { createSocietyPool, addMemberOrderToPool, type SocietyMemberOrder } from "./societyPooling";
 import { formatOndcCatalog } from "./ondc/protocol";
+import { createDisputeClaim, evaluateAutomatedResolution, getAllDisputes, resolveDisputeClaim } from "./disputeEngine";
+import { getActiveAlerts, getTripTelemetry, recordTelemetryReading } from "./telemetryEngine";
+import { fetchHarvestWeather } from "./weatherEngine";
+import { getDispatchedNotifications, sendNotification } from "./notificationEngine";
+import {
+  persistEscrowAccount,
+  persistOrderDispute,
+  persistProofOfDelivery,
+  persistSocietyPool,
+  persistSocietyPoolOrder,
+  persistTelemetryLog,
+} from "./db";
 
 const fpoProcedure = protectedProcedure.use(({ ctx, next }) => {
   if (ctx.user.role !== "admin" && ctx.user.role !== "fpo") {
@@ -330,6 +342,133 @@ export const appRouter = router({
           input.directAppOfferPerKg
         )
       ),
+
+    /* ------------------- Driver, Telemetry & e-POD ------------------- */
+
+    getDriverActiveTrip: publicProcedure
+      .input(z.object({ tripCode: z.string().default("TRIP-CHN-07") }))
+      .query(({ input }) => {
+        return {
+          tripCode: input.tripCode,
+          driverName: "Murugan Selvam",
+          vehicleNumber: "TN 24 AE 8812 (Electric Reefer LCV)",
+          capacityKg: 1200,
+          currentLoadKg: 780,
+          status: "IN_TRANSIT" as const,
+          stops: [
+            { id: "depot", name: "Krishnagiri FPO Hub", type: "depot", status: "COMPLETED", lat: 12.5104, lng: 78.2137, demandKg: 0 },
+            { id: "farm-1", name: "Ramesh Farmer Pickup", type: "farm", status: "COMPLETED", lat: 12.5500, lng: 78.1500, demandKg: 450 },
+            { id: "farm-2", name: "Murugan Farmer Pickup", type: "farm", status: "COMPLETED", lat: 12.4800, lng: 78.2800, demandKg: 330 },
+            { id: "buyer-1", name: "Prestige RWA Society Hub", type: "buyer", status: "NEXT_STOP", lat: 12.9906, lng: 80.2206, demandKg: -400 },
+            { id: "buyer-2", name: "UrbanFresh Chennai Store", type: "buyer", status: "PENDING", lat: 13.0150, lng: 80.2600, demandKg: -380 },
+            { id: "depot-return", name: "Return to Krishnagiri Depot", type: "return", status: "PENDING", lat: 12.5104, lng: 78.2137, demandKg: 0 },
+          ],
+        };
+      }),
+
+    submitProofOfDelivery: publicProcedure
+      .input(
+        z.object({
+          tripCode: z.string(),
+          stopId: z.string(),
+          recipientName: z.string(),
+          deliveredKg: z.number().positive(),
+          conditionGrade: z.string().default("Grade A"),
+          signatureBase64: z.string().optional(),
+          gpsLat: z.number().optional(),
+          gpsLng: z.number().optional(),
+        })
+      )
+      .mutation(async ({ input }) => {
+        const podCode = `POD-${Date.now()}`;
+        await persistProofOfDelivery({
+          podCode,
+          tripCode: input.tripCode,
+          stopId: input.stopId,
+          recipientName: input.recipientName,
+          deliveredKg: input.deliveredKg,
+          conditionGrade: input.conditionGrade,
+          signatureBase64: input.signatureBase64,
+          gpsLat: input.gpsLat,
+          gpsLng: input.gpsLng,
+        });
+
+        // Trigger notification
+        await sendNotification({
+          recipientPhone: "+919876543210",
+          recipientRole: "buyer",
+          template: "PAYOUT_CREDITED",
+          variables: {
+            amount: input.deliveredKg * 28,
+            upiId: "farmer.ramesh@okaxis",
+            lotCode: "LOT-TOM-260829-A",
+          },
+        });
+
+        return { success: true, podCode, message: "Proof-of-Delivery recorded and verified." };
+      }),
+
+    getLiveTelemetry: publicProcedure
+      .input(z.object({ tripCode: z.string().default("TRIP-CHN-07") }))
+      .query(({ input }) => {
+        return {
+          telemetryTimeline: getTripTelemetry(input.tripCode),
+          activeAlerts: getActiveAlerts(),
+        };
+      }),
+
+    /* ------------------- Weather & Agro Harvest ------------------- */
+
+    harvestWeatherForecast: publicProcedure
+      .input(
+        z.object({
+          lat: z.number().default(12.5104),
+          lng: z.number().default(78.2137),
+          locationName: z.string().default("Krishnagiri Farmer Cluster"),
+        })
+      )
+      .query(({ input }) => fetchHarvestWeather(input.lat, input.lng, input.locationName)),
+
+    /* ------------------- Disputes & Claims ------------------- */
+
+    raiseDispute: publicProcedure
+      .input(
+        z.object({
+          orderId: z.string(),
+          escrowId: z.string().optional(),
+          claimantRole: z.enum(["buyer", "fpo", "transporter"]),
+          disputeType: z.enum([
+            "TRANSIT_SPOILAGE",
+            "WEIGHT_DISCREPANCY",
+            "GRADE_MISMATCH",
+            "DELAYED_DELIVERY",
+            "TEMPERATURE_BREACH",
+          ]),
+          claimedAmountInr: z.number().positive(),
+          description: z.string().min(5),
+          evidenceUrls: z.array(z.string()).optional(),
+        })
+      )
+      .mutation(async ({ input }) => {
+        const claim = createDisputeClaim(input);
+        await persistOrderDispute({ ...input, disputeId: claim.disputeId });
+        const autoEval = evaluateAutomatedResolution(claim);
+        return { claim, autoEval };
+      }),
+
+    listDisputes: publicProcedure.query(() => getAllDisputes()),
+
+    resolveDispute: operationsProcedure
+      .input(
+        z.object({
+          disputeId: z.string(),
+          status: z.enum(["RESOLVED_REFUND", "RESOLVED_REJECTED", "SETTLED"]),
+          notes: z.string(),
+        })
+      )
+      .mutation(({ input }) => {
+        return resolveDisputeClaim(input.disputeId, { status: input.status, notes: input.notes });
+      }),
   }),
 });
 

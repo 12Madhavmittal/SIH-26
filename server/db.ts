@@ -1,14 +1,21 @@
 import { and, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
+  coldChainTelemetry,
   deliveryPlans,
+  driverTrips,
+  escrowAccounts,
   farmerProfiles,
   impactSnapshots,
   InsertUser,
   lotContributions,
   marketplaceOrders,
+  orderDisputes,
   organizationProfiles,
   produceListings,
+  proofOfDeliveries,
+  societyPoolOrders,
+  societyPools,
   traceabilityLots,
   users,
 } from "../drizzle/schema";
@@ -307,3 +314,213 @@ export async function getImpactSnapshotRecords() {
   if (!db) return [];
   return db.select().from(impactSnapshots).limit(100);
 }
+
+/* ------------------- Escrow Persistence ------------------- */
+
+export async function persistEscrowAccount(input: {
+  escrowId: string;
+  orderId: string;
+  buyerId: string;
+  fpoId: string;
+  transporterId?: string;
+  totalAmountInr: number;
+  fpoAmountInr: number;
+  logisticsAmountInr: number;
+  platformFeeInr?: number;
+  status: "INITIATED" | "FUNDS_LOCKED" | "DISPATCH_ADVANCE_RELEASED" | "DELIVERY_CONFIRMED" | "SETTLED_COMPLETE" | "DISPUTED_HOLD" | "REFUNDED";
+}) {
+  const db = await getDb();
+  if (!db) return { stored: false };
+  const existing = await db.select().from(escrowAccounts).where(eq(escrowAccounts.escrowId, input.escrowId)).limit(1);
+  if (existing[0]) {
+    await db.update(escrowAccounts).set({
+      status: input.status,
+      transporterId: input.transporterId ?? existing[0].transporterId,
+      updatedAt: new Date(),
+    }).where(eq(escrowAccounts.escrowId, input.escrowId));
+    return { stored: true, updated: true };
+  }
+  await db.insert(escrowAccounts).values({
+    escrowId: input.escrowId,
+    orderId: input.orderId,
+    buyerId: input.buyerId,
+    fpoId: input.fpoId,
+    transporterId: input.transporterId,
+    totalAmountInr: String(input.totalAmountInr),
+    fpoAmountInr: String(input.fpoAmountInr),
+    logisticsAmountInr: String(input.logisticsAmountInr),
+    platformFeeInr: String(input.platformFeeInr ?? 0),
+    status: input.status,
+    fundLockedAt: input.status === "FUNDS_LOCKED" ? new Date() : undefined,
+  });
+  return { stored: true, updated: false };
+}
+
+export async function getPersistedEscrow(escrowId: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const res = await db.select().from(escrowAccounts).where(eq(escrowAccounts.escrowId, escrowId)).limit(1);
+  return res[0] ?? null;
+}
+
+/* ------------------- Society Pooling Persistence ------------------- */
+
+export async function persistSocietyPool(input: {
+  poolId: string;
+  societyName: string;
+  clusterLocation: string;
+  crop: string;
+  targetKg: number;
+  currentKg?: number;
+  basePricePerKg: number;
+  currentPricePerKg: number;
+  cutoffTime: Date;
+  status?: "OPEN" | "TARGET_MET" | "DISPATCHED" | "DELIVERED" | "EXPIRED";
+}) {
+  const db = await getDb();
+  if (!db) return { stored: false };
+  const existing = await db.select().from(societyPools).where(eq(societyPools.poolId, input.poolId)).limit(1);
+  if (existing[0]) {
+    await db.update(societyPools).set({
+      currentKg: input.currentKg ?? existing[0].currentKg,
+      currentPricePerKg: String(input.currentPricePerKg),
+      status: input.status ?? existing[0].status,
+    }).where(eq(societyPools.poolId, input.poolId));
+    return { stored: true, updated: true };
+  }
+  await db.insert(societyPools).values({
+    poolId: input.poolId,
+    societyName: input.societyName,
+    clusterLocation: input.clusterLocation,
+    crop: input.crop,
+    targetKg: input.targetKg,
+    currentKg: input.currentKg ?? 0,
+    basePricePerKg: String(input.basePricePerKg),
+    currentPricePerKg: String(input.currentPricePerKg),
+    cutoffTime: input.cutoffTime,
+    status: input.status ?? "OPEN",
+  });
+  return { stored: true, updated: false };
+}
+
+export async function persistSocietyPoolOrder(input: {
+  poolId: string;
+  residentName: string;
+  flatNumber: string;
+  phone: string;
+  quantityKg: number;
+  pricePerKgAtOrder: number;
+  totalInr: number;
+}) {
+  const db = await getDb();
+  if (!db) return { stored: false };
+  await db.insert(societyPoolOrders).values({
+    poolId: input.poolId,
+    residentName: input.residentName,
+    flatNumber: input.flatNumber,
+    phone: input.phone,
+    quantityKg: input.quantityKg,
+    pricePerKgAtOrder: String(input.pricePerKgAtOrder),
+    totalInr: String(input.totalInr),
+    paymentStatus: "PAID_ESCROW",
+  });
+  return { stored: true };
+}
+
+export async function getPersistedSocietyPool(poolId: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const pool = (await db.select().from(societyPools).where(eq(societyPools.poolId, poolId)).limit(1))[0];
+  if (!pool) return null;
+  const orders = await db.select().from(societyPoolOrders).where(eq(societyPoolOrders.poolId, poolId));
+  return { ...pool, orders };
+}
+
+/* ------------------- Disputes Persistence ------------------- */
+
+export async function persistOrderDispute(input: {
+  disputeId: string;
+  orderId: string;
+  escrowId?: string;
+  claimantRole: "buyer" | "fpo" | "transporter";
+  disputeType: "TRANSIT_SPOILAGE" | "WEIGHT_DISCREPANCY" | "GRADE_MISMATCH" | "DELAYED_DELIVERY" | "TEMPERATURE_BREACH";
+  claimedAmountInr: number;
+  description: string;
+  evidenceUrls?: string[];
+}) {
+  const db = await getDb();
+  if (!db) return { stored: false };
+  await db.insert(orderDisputes).values({
+    disputeId: input.disputeId,
+    orderId: input.orderId,
+    escrowId: input.escrowId,
+    claimantRole: input.claimantRole,
+    disputeType: input.disputeType,
+    claimedAmountInr: String(input.claimedAmountInr),
+    description: input.description,
+    evidenceUrls: input.evidenceUrls ? JSON.stringify(input.evidenceUrls) : null,
+    status: "OPEN",
+  });
+  return { stored: true };
+}
+
+export async function getPersistedDisputes() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(orderDisputes).limit(100);
+}
+
+/* ------------------- Driver & Telemetry Persistence ------------------- */
+
+export async function persistProofOfDelivery(input: {
+  podCode: string;
+  tripCode: string;
+  stopId: string;
+  recipientName: string;
+  deliveredKg: number;
+  conditionGrade: string;
+  signatureBase64?: string;
+  photoUrl?: string;
+  gpsLat?: number;
+  gpsLng?: number;
+}) {
+  const db = await getDb();
+  if (!db) return { stored: false };
+  await db.insert(proofOfDeliveries).values({
+    podCode: input.podCode,
+    tripCode: input.tripCode,
+    stopId: input.stopId,
+    recipientName: input.recipientName,
+    deliveredKg: input.deliveredKg,
+    conditionGrade: input.conditionGrade,
+    signatureBase64: input.signatureBase64,
+    photoUrl: input.photoUrl,
+    gpsLat: input.gpsLat ? String(input.gpsLat) : null,
+    gpsLng: input.gpsLng ? String(input.gpsLng) : null,
+  });
+  return { stored: true };
+}
+
+export async function persistTelemetryLog(input: {
+  sensorId: string;
+  tripCode: string;
+  temperatureCelsius: number;
+  humidityPercent: number;
+  doorOpen: number;
+  batteryPercent: number;
+  isAlertBreached: number;
+}) {
+  const db = await getDb();
+  if (!db) return { stored: false };
+  await db.insert(coldChainTelemetry).values({
+    sensorId: input.sensorId,
+    tripCode: input.tripCode,
+    temperatureCelsius: String(input.temperatureCelsius),
+    humidityPercent: String(input.humidityPercent),
+    doorOpen: input.doorOpen,
+    batteryPercent: input.batteryPercent,
+    isAlertBreached: input.isAlertBreached,
+  });
+  return { stored: true };
+}
+

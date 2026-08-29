@@ -73,12 +73,91 @@ export default function FpoStudio() {
   });
 
   const [voiceText, setVoiceText] = useState("");
+  const [isListening, setIsListening] = useState(false);
   const [listingResult, setListingResult] = useState<any>(null);
   const [lotResult, setLotResult] = useState<any>(null);
 
-  const createListing = trpc.fpo.demoCreateListing.useMutation();
-  const assembleLot = trpc.fpo.demoAssembleLot.useMutation();
+  const utils = trpc.useUtils();
+  const createListing = trpc.fpo.demoCreateListing.useMutation({
+    onSuccess: () => {
+      utils.marketplace.demo.invalidate();
+    },
+  });
+  const assembleLot = trpc.fpo.demoAssembleLot.useMutation({
+    onSuccess: () => {
+      utils.marketplace.demo.invalidate();
+    },
+  });
   const parseVoice = trpc.operations.parseVoiceListing.useMutation();
+
+  const startVoiceRecording = () => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      alert("Web Speech API is not supported in this browser. Please type or paste below.");
+      return;
+    }
+
+    try {
+      const recognition = new SpeechRecognition();
+      recognition.lang = "hi-IN"; // Default to Hindi-India, handles Tamil/English accents
+      recognition.continuous = false;
+      recognition.interimResults = false;
+
+      recognition.onstart = () => {
+        setIsListening(true);
+      };
+
+      recognition.onresult = (event: any) => {
+        const transcript = event.results[0][0].transcript;
+        setVoiceText(transcript);
+        setIsListening(false);
+        // Automatically trigger AI parsing
+        parseVoice.mutate(
+          { transcript },
+          {
+            onSuccess: (res) => {
+              if (res.crop) {
+                const formattedCrop = res.crop.charAt(0).toUpperCase() + res.crop.slice(1);
+                setListing((prev) => ({
+                  ...prev,
+                  crop: formattedCrop,
+                  availableKg: res.quantityKg ?? prev.availableKg,
+                }));
+                setLot((prev) => ({
+                  ...prev,
+                  crop: formattedCrop,
+                  grade: res.grade ?? "Grade A",
+                  contributions: res.harvestCluster
+                    ? [
+                        {
+                          farmerCode: "KR-VOICE",
+                          harvestCluster: `${res.harvestCluster} cluster`,
+                          contributedKg: res.quantityKg ?? 480,
+                        },
+                      ]
+                    : prev.contributions,
+                }));
+              }
+            },
+          }
+        );
+      };
+
+      recognition.onerror = (event: any) => {
+        console.warn("Speech recognition error:", event.error);
+        setIsListening(false);
+      };
+
+      recognition.onend = () => {
+        setIsListening(false);
+      };
+
+      recognition.start();
+    } catch (e) {
+      console.warn("Speech error:", e);
+      setIsListening(false);
+    }
+  };
 
   // Dynamic 7-day demand and price forecast for the chosen commodity
   const { data: forecastData, isLoading: isForecastLoading } = trpc.operations.demandForecast.useQuery({
@@ -201,9 +280,20 @@ export default function FpoStudio() {
                 Farmers can speak in local language (e.g. <em>&quot;Meri 500 kg tamatar ki fasal tayar hai, A-grade, Hosur cluster me&quot;</em>) to auto-fill the lot form.
               </p>
               <div className="mt-3 flex gap-2">
+                <button
+                  type="button"
+                  onClick={startVoiceRecording}
+                  className={`flex shrink-0 items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-bold transition-all ${
+                    isListening ? "animate-pulse bg-rose-600 text-white" : "bg-forest text-white hover:bg-forest/90"
+                  }`}
+                  title="Click to speak in Hindi, Tamil, or English"
+                >
+                  <Mic size={14} className={isListening ? "animate-bounce" : "text-[#dbecc3]"} />
+                  <span>{isListening ? "Listening..." : "Speak"}</span>
+                </button>
                 <input
                   type="text"
-                  placeholder="Paste or speak local phrase..."
+                  placeholder="Or paste phrase: 500 kg tamatar A-grade Hosur..."
                   value={voiceText}
                   onChange={(e) => setVoiceText(e.target.value)}
                   className="w-full rounded-xl border border-line bg-white px-3 py-2 text-xs text-ink placeholder:text-ink/40 focus:border-forest focus:outline-none"
@@ -211,10 +301,10 @@ export default function FpoStudio() {
                 <button
                   onClick={handleVoiceParse}
                   disabled={parseVoice.isPending}
-                  className="action-button flex shrink-0 items-center gap-1.5 bg-forest px-4 py-2 text-xs text-white"
+                  className="action-button flex shrink-0 items-center gap-1.5 bg-leaf px-4 py-2 text-xs text-forest font-bold"
                 >
-                  <Sparkles size={14} className="text-[#dbecc3]" />
-                  <span>{parseVoice.isPending ? "Parsing..." : "Parse Voice"}</span>
+                  <Sparkles size={14} />
+                  <span>{parseVoice.isPending ? "Parsing..." : "Parse"}</span>
                 </button>
               </div>
               {parseVoice.data && (

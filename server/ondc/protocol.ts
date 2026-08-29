@@ -8,6 +8,8 @@
  *   - on_confirm: Fulfillment object with OSRM pickup/drop GPS coordinates.
  */
 
+import { createHash } from "crypto";
+
 export interface OndcItem {
   id: string;
   descriptor: {
@@ -62,6 +64,38 @@ export interface OndcCatalogPayload {
     };
   };
 }
+
+export function generateOndcSignatureHeader(payload: object, keyPairId = "annadata-direct-key-1"): string {
+  const digest = createHash("sha256").update(JSON.stringify(payload)).digest("base64");
+  const created = Math.floor(Date.now() / 1000);
+  const expires = created + 300;
+  return `Signature keyId="${keyPairId}|ed25519",algorithm="ed25519",created="${created}",expires="${expires}",headers="(created) (expires) digest",signature="MOCK_ED25519_SIG_${digest.slice(0, 16)}"`;
+}
+
+export function formatOndcOrderConfirm(orderId: string, crop: string, quantityKg: number, totalInr: number) {
+  return {
+    context: {
+      domain: "ONDC:AGR10",
+      action: "on_confirm",
+      core_version: "1.2.0",
+      bap_id: "buyerapp.ondc.org",
+      bpp_id: "annadata-direct.gov.in",
+      transaction_id: `TXN-${orderId}`,
+      timestamp: new Date().toISOString(),
+    },
+    message: {
+      order: {
+        id: orderId,
+        state: "Accepted",
+        provider: { id: "FPO-KRISHNAGIRI-01" },
+        items: [{ id: crop, quantity: { count: quantityKg } }],
+        quote: { price: { currency: "INR", value: String(totalInr) } },
+        payment: { type: "ON-ORDER", status: "PAID-ESCROW" },
+      },
+    },
+  };
+}
+
 
 export function formatOndcCatalog(
   listings: any[],
