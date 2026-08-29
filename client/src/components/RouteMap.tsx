@@ -16,7 +16,7 @@ type RouteSummary = {
 };
 
 const API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
-const MAP_ID = import.meta.env.VITE_GOOGLE_MAPS_MAP_ID;
+const MAP_ID = import.meta.env.VITE_GOOGLE_MAPS_MAP_ID || "DEMO_MAP_ID";
 
 let googleMapsLoadPromise: Promise<typeof google> | undefined;
 
@@ -30,25 +30,37 @@ function loadGoogleMaps(): Promise<typeof google> {
   }
 
   const existingGoogleApi = getGoogleApi();
-  if (existingGoogleApi) {
+  if (existingGoogleApi?.maps?.Map) {
     return Promise.resolve(existingGoogleApi);
   }
 
   if (googleMapsLoadPromise) return googleMapsLoadPromise;
 
   googleMapsLoadPromise = new Promise((resolve, reject) => {
+    // Check if script already exists
+    if (document.querySelector('script[src*="maps.googleapis.com/maps/api/js"]')) {
+      const checkInterval = setInterval(() => {
+        const api = getGoogleApi();
+        if (api?.maps?.Map) {
+          clearInterval(checkInterval);
+          resolve(api);
+        }
+      }, 100);
+      return;
+    }
+
     const script = document.createElement("script");
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(API_KEY)}&v=weekly&loading=async`;
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(API_KEY)}&v=weekly&libraries=routes,geometry,marker`;
     script.async = true;
     script.onload = () => {
       const loadedGoogleApi = getGoogleApi();
-      if (loadedGoogleApi) {
+      if (loadedGoogleApi?.maps) {
         resolve(loadedGoogleApi);
       } else {
-        reject(new Error("Google Maps loaded without the required Routes library."));
+        reject(new Error("Google Maps loaded but google.maps namespace is not available."));
       }
     };
-    script.onerror = () => reject(new Error("The Google Maps script could not be loaded."));
+    script.onerror = () => reject(new Error("The Google Maps script could not be loaded. Please check API Key / Network."));
     document.head.appendChild(script);
   });
 
@@ -109,11 +121,12 @@ export function RouteMap({
         const googleApi = await loadGoogleMaps();
         if (disposed || !containerRef.current) return;
 
-        const maps = googleApi.maps;
-        const map = new maps.Map(containerRef.current, {
+        // 1. Initialize Map
+        const MapConstructor = googleApi.maps.Map;
+        const map = new MapConstructor(containerRef.current, {
           center: { lat: stops[0].lat, lng: stops[0].lng },
           zoom: 8,
-          mapId: MAP_ID || undefined,
+          mapId: MAP_ID || "DEMO_MAP_ID",
           mapTypeControl: false,
           streetViewControl: false,
           fullscreenControl: true,
@@ -122,79 +135,183 @@ export function RouteMap({
           gestureHandling: "cooperative",
         });
 
-        const bounds = new maps.LatLngBounds();
-        const infoWindow = new maps.InfoWindow();
+        const bounds = new googleApi.maps.LatLngBounds();
+        const infoWindow = new googleApi.maps.InfoWindow();
+
+        // Check if AdvancedMarkerElement is supported in this build
+        const AdvancedMarkerElement = (googleApi.maps as any).marker?.AdvancedMarkerElement;
+        const PinElement = (googleApi.maps as any).marker?.PinElement;
+
         stops.forEach((stop, index) => {
           const position = { lat: stop.lat, lng: stop.lng };
           bounds.extend(position);
-          const marker = new maps.Marker({
-            map,
-            position,
-            draggable: Boolean(onStopDragEnd),
-            title: `${index + 1}. ${stop.name}`,
-            label: { text: String(index + 1), color: "#ffffff", fontWeight: "700" },
-            icon: {
-              path: maps.SymbolPath.CIRCLE,
-              scale: 11,
-              fillColor: markerColor(stop, index, stops.length),
-              fillOpacity: 1,
-              strokeColor: "#ffffff",
-              strokeWeight: 2,
-            },
-          });
 
-          if (onStopDragEnd) {
-            marker.addListener("dragend", (e: google.maps.MapMouseEvent) => {
-              if (e.latLng) {
-                onStopDragEnd(stop.id, e.latLng.lat(), e.latLng.lng());
-              }
+          const color = markerColor(stop, index, stops.length);
+          let markerOverlay: any;
+
+          if (AdvancedMarkerElement && PinElement) {
+            const pin = new PinElement({
+              background: color,
+              borderColor: "#ffffff",
+              glyphColor: "#ffffff",
+              glyph: String(index + 1),
+              scale: 1.1,
+            });
+
+            markerOverlay = new AdvancedMarkerElement({
+              map,
+              position,
+              title: `${index + 1}. ${stop.name}`,
+              content: pin.element,
+              gmpDraggable: Boolean(onStopDragEnd),
+            });
+
+            if (onStopDragEnd) {
+              markerOverlay.addListener("dragend", (e: any) => {
+                if (e.latLng) {
+                  onStopDragEnd(stop.id, e.latLng.lat(), e.latLng.lng());
+                }
+              });
+            }
+
+            markerOverlay.addListener("click", () => {
+              const quantity = stop.demandKg ? `<br/><strong>${Math.abs(stop.demandKg)} kg</strong>` : "";
+              infoWindow.setContent(
+                `<div style="max-width:220px;padding:4px 6px;font-family:sans-serif;color:#1e293b;"><strong>${index + 1}. ${stop.name}</strong><br/><span style="color:#64748b;font-size:12px;">${classifyStop(stop, index, stops.length)}</span>${quantity}</div>`,
+              );
+              infoWindow.open({ map, anchor: markerOverlay });
+            });
+          } else {
+            markerOverlay = new googleApi.maps.Marker({
+              map,
+              position,
+              draggable: Boolean(onStopDragEnd),
+              title: `${index + 1}. ${stop.name}`,
+              label: { text: String(index + 1), color: "#ffffff", fontWeight: "700" },
+              icon: {
+                path: googleApi.maps.SymbolPath.CIRCLE,
+                scale: 11,
+                fillColor: color,
+                fillOpacity: 1,
+                strokeColor: "#ffffff",
+                strokeWeight: 2,
+              },
+            });
+
+            if (onStopDragEnd) {
+              markerOverlay.addListener("dragend", (e: google.maps.MapMouseEvent) => {
+                if (e.latLng) {
+                  onStopDragEnd(stop.id, e.latLng.lat(), e.latLng.lng());
+                }
+              });
+            }
+
+            markerOverlay.addListener("click", () => {
+              const quantity = stop.demandKg ? `<br/><strong>${Math.abs(stop.demandKg)} kg</strong>` : "";
+              infoWindow.setContent(
+                `<div style="max-width:220px;padding:2px 4px"><strong>${index + 1}. ${stop.name}</strong><br/>${classifyStop(stop, index, stops.length)}${quantity}</div>`,
+              );
+              infoWindow.open({ map, anchor: markerOverlay });
             });
           }
 
-          marker.addListener("click", () => {
-            const quantity = stop.demandKg ? `<br/><strong>${Math.abs(stop.demandKg)} kg</strong>` : "";
-            infoWindow.setContent(
-              `<div style="max-width:220px;padding:2px 4px"><strong>${index + 1}. ${stop.name}</strong><br/>${classifyStop(stop, index, stops.length)}${quantity}</div>`,
-            );
-            infoWindow.open({ map, anchor: marker });
-          });
-          overlays.push(marker);
+          overlays.push(markerOverlay);
         });
         map.fitBounds(bounds, 48);
 
-        const { Route } = (await maps.importLibrary("routes")) as unknown as { Route: any };
-        const routeRequest = {
-          origin: { lat: stops[0].lat, lng: stops[0].lng },
-          destination: { lat: stops[stops.length - 1].lat, lng: stops[stops.length - 1].lng },
-          intermediates: stops.slice(1, -1).map((stop) => ({
-            location: { lat: stop.lat, lng: stop.lng },
-            vehicleStopover: true,
-          })),
-          travelMode: "DRIVING",
-          fields: ["path", "distanceMeters", "durationMillis"],
+        // 2. Compute Driving Route
+        // Try Google DirectionsService first, and if REQUEST_DENIED (e.g. Directions API not enabled in Cloud Console),
+        // seamlessly fall back to high-resolution OSRM road coordinates rendered via Google Polyline
+        const directionsService = new googleApi.maps.DirectionsService();
+        const directionsRenderer = new googleApi.maps.DirectionsRenderer({
+          map,
+          suppressMarkers: true, // We already draw custom numbered & colored markers
+          polylineOptions: {
+            strokeColor: "#1b4329",
+            strokeOpacity: 0.85,
+            strokeWeight: 5,
+          },
+        });
+        overlays.push(directionsRenderer as any);
+
+        const origin = { lat: stops[0].lat, lng: stops[0].lng };
+        const destination = { lat: stops[stops.length - 1].lat, lng: stops[stops.length - 1].lng };
+        const waypoints = stops.slice(1, -1).map((s) => ({
+          location: { lat: s.lat, lng: s.lng },
+          stopover: true,
+        }));
+
+        const renderOsrmFallbackRoad = async () => {
+          try {
+            const coords = stops.map((s) => `${s.lng},${s.lat}`).join(";");
+            const res = await fetch(`https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson`);
+            const data = await res.json();
+            if (disposed) return;
+            if (data.code === "Ok" && data.routes?.[0]) {
+              const route = data.routes[0];
+              const path = route.geometry.coordinates.map(([lng, lat]: [number, number]) => ({ lat, lng }));
+              const polyline = new googleApi.maps.Polyline({
+                path,
+                strokeColor: "#1b4329",
+                strokeOpacity: 0.85,
+                strokeWeight: 5,
+                map,
+              });
+              overlays.push(polyline);
+
+              const routeBounds = new googleApi.maps.LatLngBounds();
+              path.forEach((pt: google.maps.LatLngLiteral) => routeBounds.extend(pt));
+              map.fitBounds(routeBounds, 48);
+
+              setSummary({
+                distanceKm: Number((route.distance / 1000).toFixed(1)),
+                durationMinutes: Math.round(route.duration / 60),
+              });
+              setStatus("ready");
+            } else {
+              throw new Error("Unable to fetch road geometry");
+            }
+          } catch (osrmErr) {
+            console.error("OSRM fallback error:", osrmErr);
+            setError("Google Directions API is not enabled in your Google Cloud project. Enable 'Directions API' or 'Routes API' in Google Cloud Console.");
+            setStatus("error");
+          }
         };
-        const { routes } = await Route.computeRoutes(routeRequest);
-        if (disposed) return;
-        if (!routes?.[0]) throw new Error("Google Routes did not return a driving route for these stops.");
 
-        const route = routes[0];
-        const polylines = route.createPolylines();
-        polylines.forEach((polyline: google.maps.Polyline) => {
-          polyline.setOptions({ strokeColor: "#1b4329", strokeOpacity: 0.9, strokeWeight: 5 });
-          polyline.setMap(map);
-          overlays.push(polyline);
-        });
-        if (route.path?.length) {
-          const routeBounds = new maps.LatLngBounds();
-          route.path.forEach((point: google.maps.LatLngLiteral) => routeBounds.extend(point));
-          map.fitBounds(routeBounds, 48);
-        }
+        directionsService.route(
+          {
+            origin,
+            destination,
+            waypoints,
+            travelMode: googleApi.maps.TravelMode.DRIVING,
+          },
+          (result, routeStatus) => {
+            if (disposed) return;
+            if (routeStatus === googleApi.maps.DirectionsStatus.OK && result) {
+              directionsRenderer.setDirections(result);
 
-        setSummary({
-          distanceKm: Number((route.distanceMeters / 1000).toFixed(1)),
-          durationMinutes: Math.round(route.durationMillis / 60000),
-        });
-        setStatus("ready");
+              let totalDistanceMeters = 0;
+              let totalDurationSeconds = 0;
+
+              const route = result.routes[0];
+              if (route?.legs) {
+                for (const leg of route.legs) {
+                  totalDistanceMeters += leg.distance?.value ?? 0;
+                  totalDurationSeconds += leg.duration?.value ?? 0;
+                }
+              }
+
+              setSummary({
+                distanceKm: Number((totalDistanceMeters / 1000).toFixed(1)),
+                durationMinutes: Math.round(totalDurationSeconds / 60),
+              });
+              setStatus("ready");
+            } else {
+              console.warn("Google Directions error (REQUEST_DENIED or unenabled), switching to OSRM road geometry:", routeStatus);
+              void renderOsrmFallbackRoad();
+            }
+          }
+        );
       } catch (routeError) {
         if (disposed) return;
         console.error("Unable to render Google Maps route", routeError);
